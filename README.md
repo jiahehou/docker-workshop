@@ -171,3 +171,287 @@ SELECT * FROM test;
 6. inserting: `df_chunk.to_sql(name='yellow_taxi_data', con=engine, if_exists='append')`
 
 ## `uv run jupyter nbconvert --to=script <JUPYTER_FILE>` --> to save to .py
+2. quick way to run this py
+
+```
+uv run python ingest_data.py \
+  --pg_user=root \
+  --pg_password=root \
+  --pg_host=localhost \
+  --pg_port=5432 \
+  --pg_db=ny_taxi \
+  --target_table=yellow_taxi_trips
+```
+
+## Docker Networks --> to make sure 2 separate contains can now be in the same network
+
+1. `docker network create pg-network`
+
+2. Build the Docker Image
+
+```
+cd pipeline
+docker build -t taxi_ingest:v001 .
+```
+
+3. Run containerized ingestion
+
+```
+docker run -it --rm\
+  --network=pg-network \
+  taxi_ingest:v001 \
+    --pg_user=root \
+    --pg_password=root \
+    --pg_host=pgdatabase \
+    --pg_port=5432 \
+    --pg_db=ny_taxi \
+    --target_table=yellow_taxi_trips
+```
+
+### Run Containers on the Same Network
+
+Stop both containers and re-run them with the network configuration:
+
+```bash
+# Run PostgreSQL on the network
+docker run -it --rm\
+  -e POSTGRES_USER="root" \
+  -e POSTGRES_PASSWORD="root" \
+  -e POSTGRES_DB="ny_taxi" \
+  -v ny_taxi_postgres_data:/var/lib/postgresql \
+  -p 5432:5432 \
+  --network=pg-network \
+  --name pgdatabase \
+  postgres:18
+
+# In another terminal, run pgAdmin on the same network
+docker run -it \
+  -e PGADMIN_DEFAULT_EMAIL="admin@admin.com" \
+  -e PGADMIN_DEFAULT_PASSWORD="root" \
+  -v pgadmin_data:/var/lib/pgadmin \
+  -p 8085:80 \
+  --network=pg-network \
+  --name pgadmin \
+  dpage/pgadmin4
+```
+
+PostgreSQL 是数据库服务器（Postgres server），负责在某台机器上监听端口（常见 5432）并处理请求。
+pgAdmin 是客户端工具之一，它通过网络协议（PostgreSQL protocol）去连：host + port + 用户名 + 密码 + 数据库名。
+
+所以 pgAdmin 自己不等于数据库，它不会“存”你的数据，它只是 帮你连、帮你发请求、帮你看结果。
+
+这点和 pgcli 完全一样：pgAdmin / pgcli / psql 都是客户端。
+
+
+* Just like with the Postgres container, we specify a network and a name for pgAdmin.
+* The container names (`pgdatabase` and `pgadmin`) allow the containers to find each other within the network.
+
+
+## Connect pgAdmin to PostgreSQL
+
+You should now be able to load pgAdmin on a web browser by browsing to `http://localhost:8085`. Use the same email and password you used for running the container to log in.
+
+1. Open browser and go to `http://localhost:8085`
+2. Login with email: `admin@admin.com`, password: `root`
+3. Right-click "Servers" → Register → Server
+4. Configure:
+   - **General tab**: Name: `Local Docker`
+   - **Connection tab**:
+     - Host: `pgdatabase` (the container name)
+     - Port: `5432`
+     - Username: `root`
+     - Password: `root`
+5. Save
+
+Now you can explore the database using the pgAdmin interface!
+
+
+# Docker Composer
+`docker-compose` allows us to launch multiple containers using a single configuration file, so that we don't have to run multiple complex `docker run` commands separately.
+
+Docker compose makes use of YAML files. Here's the `docker-compose.yaml` file:
+
+```yaml
+services:
+  pgdatabase:
+    image: postgres:18
+    environment:
+      POSTGRES_USER: "root"
+      POSTGRES_PASSWORD: "root"
+      POSTGRES_DB: "ny_taxi"
+    volumes:
+      - "ny_taxi_postgres_data:/var/lib/postgresql"
+    ports:
+      - "5432:5432"
+
+  pgadmin:
+    image: dpage/pgadmin4
+    environment:
+      PGADMIN_DEFAULT_EMAIL: "admin@admin.com"
+      PGADMIN_DEFAULT_PASSWORD: "root"
+    volumes:
+      - "pgadmin_data:/var/lib/pgadmin"
+    ports:
+      - "8085:80"
+
+
+
+volumes:
+  ny_taxi_postgres_data:
+  pgadmin_data:
+```
+
+### Explanation
+
+* We don't have to specify a network because `docker compose` takes care of it: every single container (or "service", as the file states) will run within the same network and will be able to find each other according to their names (`pgdatabase` and `pgadmin` in this example).
+* All other details from the `docker run` commands (environment variables, volumes and ports) are mentioned accordingly in the file following YAML syntax.
+
+## Start Services with Docker Compose
+
+We can now run Docker compose by running the following command from the same directory where `docker-compose.yaml` is found. Make sure that all previous containers aren't running anymore:
+
+```bash
+docker-compose up
+```
+
+### Detached Mode
+
+If you want to run the containers again in the background rather than in the foreground (thus freeing up your terminal), you can run them in detached mode:
+
+```bash
+docker-compose up -d
+```
+
+## Stop Services
+
+You will have to press `Ctrl+C` in order to shut down the containers when running in foreground mode. The proper way of shutting them down is with this command:
+
+```bash
+docker-compose down
+```
+
+## Other Useful Commands
+
+```bash
+# View logs
+docker-compose logs
+
+# Stop and remove volumes
+docker-compose down -v
+```
+
+## Benefits of Docker Compose
+
+- Single command to start all services
+- Automatic network creation
+- Easy configuration management
+- Declarative infrastructure
+
+## Running the Ingestion Script with Docker Compose
+
+If you want to re-run the dockerized ingest script when you run Postgres and pgAdmin with `docker compose`, you will have to find the name of the virtual network that Docker compose created for the containers.
+
+```bash
+# check the network link:
+docker network ls
+
+# it's pipeline_default (or similar based on directory name)
+# now run the script:
+docker run -it --rm\
+  --network=pipeline_default \
+  taxi_ingest:v001 \
+    --pg_user=root \
+    --pg_password=root \
+    --pg_host=pgdatabase \
+    --pg_port=5432 \
+    --pg_db=ny_taxi \
+    --target_table=yellow_taxi_trips
+```
+
+
+
+# Cleanup
+When you're done with the workshop, clean up Docker resources to free up disk space.
+
+## Stop All Running Containers
+
+```bash
+docker-compose down
+```
+
+## Remove Specific Containers
+
+```bash
+# List all containers
+docker ps -a
+
+# Remove specific container
+docker rm <container_id>
+
+# Remove all stopped containers
+docker container prune
+```
+
+## Remove Docker Images
+
+```bash
+# List all images
+docker images
+
+# Remove specific image
+docker rmi taxi_ingest:v001
+
+# Remove all unused images
+docker image prune -a
+```
+
+## Remove Docker Volumes
+
+```bash
+# List volumes
+docker volume ls
+
+# Remove specific volumes
+docker volume rm ny_taxi_postgres_data
+docker volume rm pgadmin_data
+
+# Remove all unused volumes
+docker volume prune
+```
+
+## Remove Docker Networks
+
+```bash
+# List networks
+docker network ls
+
+# Remove specific network
+docker network rm pg-network
+
+# Remove all unused networks
+docker network prune
+```
+
+## Complete Cleanup
+
+Removes ALL Docker resources - use with caution!
+
+```bash
+# ⚠️ Warning: This removes ALL Docker resources!
+docker system prune -a --volumes
+```
+
+## Clean Up Local Files
+
+```bash
+# Remove parquet files
+rm *.parquet
+
+# Remove Python cache
+rm -rf __pycache__ .pytest_cache
+
+# Remove virtual environment (if using venv)
+rm -rf .venv
+```
+
+---

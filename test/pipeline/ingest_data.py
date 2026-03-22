@@ -5,9 +5,10 @@
 
 
 import pandas as pd
-from tqdm.auto import tqdm
+from tqdm.auto import tqdm # just to see the progress
 from sqlalchemy import create_engine
-# just to see the progress
+
+import click
 
 dtype = {
     "VendorID": "Int64",
@@ -34,29 +35,29 @@ parse_dates = [
     "tpep_dropoff_datetime"
 ]
 
-
-def run():
-
-    year = 2021
-    month = 1
-    pg_user = 'root'
-    pg_password = 'root'
-    pg_host = 'localhost'
-    pg_port = '5432'
-    pg_db = 'ny_taxi'
-    chunck_size = 100000
+@click.command()
+@click.option('--year', default=2021, show_default=True, type=int, help='Data year')
+@click.option('--month', default=1, show_default=True, type=int, help='Data month')
+@click.option('--pg_user', default='root', show_default=True, help='PostgreSQL user')
+@click.option('--pg_password', default='root', show_default=True, help='PostgreSQL password')
+@click.option('--pg_host', default='localhost', show_default=True, help='PostgreSQL host')
+@click.option('--pg_port', default='5432', show_default=True, help='PostgreSQL port')
+@click.option('--pg_db', default='ny_taxi', show_default=True, help='PostgreSQL database name')
+@click.option('--target_table', default='yellow_taxi_data', show_default=True, help='Target table name')
+@click.option('--chunck_size', default=100000, show_default=True, type=int, help='CSV chunk size')
+def run(year, month, pg_user, pg_password, pg_host, pg_port, pg_db, target_table, chunck_size):
 
 # prefix = 'https://github.com/DataTalksClub/nyc-tlc-data/releases/download/yellow/'
 # df = pd.read_csv(prefix + 'yellow_tripdata_2021-01.csv.gz', nrows=100)
 
-    target_table = "yellow_taxi_data"
+
     prefix = 'https://github.com/DataTalksClub/nyc-tlc-data/releases/download/yellow/'
     url = f'{prefix}/yellow_tripdata_{year}-{month:02d}.csv.gz'
 
 
     eng_url = f'postgresql+psycopg://{pg_user}:{pg_password}@{pg_host}:{pg_port}/{pg_db}'
 
-    engine = create_engine('postgresql+psycopg://root:root@localhost:5432/ny_taxi')
+    engine = create_engine(eng_url)
 
 
     df_iter = pd.read_csv(
